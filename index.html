@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="referrer" content="no-referrer">
 <title>Apex XI</title>
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow:wght@300;400;500;600;700&family=Barlow+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
@@ -545,6 +546,23 @@ const FORMATIONS={
   "5-2-1-2":{positions:["GK","ST","ST","CAM","CM","CM","LB","CB","CB","CB","RB"],coords:[[50,88],[30,10],[70,10],[50,28],[30,46],[70,46],[8,68],[28,68],[50,68],[72,68],[92,68]]}
 };
 
+<script>
+// ═══════════════════════════════════════════════
+//  SECURITY & PROXY HELPERS
+// ═══════════════════════════════════════════════
+/**
+ * CRITICAL: Fixes image URLs for GitHub Pages.
+ * Ensures internal 'url=' parameter has 'https://' 
+ * so wsrv.nl can fetch the image successfully.
+ */
+const getImgUrl = (imgUrl) => {
+  if (!imgUrl) return "";
+  if (imgUrl.includes('url=i.postimg')) {
+    return imgUrl.replace('url=', 'url=https://');
+  }
+  return imgUrl;
+};
+
 // ═══════════════════════════════════════════════
 //  STATE
 // ═══════════════════════════════════════════════
@@ -621,7 +639,6 @@ function pickFormation(btn, ctx){
   btn.classList.add('selected');
   if(ctx === 'lobby'){
     lobbyFormation = btn.dataset.f;
-    // Tell guest our formation has been selected/changed
     send({type:'HOST_FORMATION_UPDATE', formation:lobbyFormation});
     checkLobbyReady();
   } else {
@@ -636,14 +653,13 @@ function checkJoinReady(){
 document.getElementById('joinCodeInput').addEventListener('input', checkJoinReady);
 
 // ═══════════════════════════════════════════════
-//  HOST LOBBY  — uses PeerJS with ID apexxi-XXXX
+//  HOST LOBBY
 // ═══════════════════════════════════════════════
 function goToLobby(){
   destroyPeer();
   lobbyFormation = '';
   document.getElementById('lobbyFormationRow').querySelectorAll('.form-btn').forEach(b=>b.classList.remove('selected'));
 
-  // Reset slots
   document.getElementById('slotName0').textContent = G.username;
   document.getElementById('slot0').classList.add('filled');
   document.getElementById('slotName1').textContent = 'Waiting...';
@@ -665,33 +681,24 @@ function goToLobby(){
     ]}
   });
 
-  peer.on('open', ()=>{
-    // Ready to receive connections — code is already displayed
-  });
-
   peer.on('connection', (c)=>{
-    // If we already have a live connection, reject duplicates
     if(conn && conn.open){ c.close(); return; }
     conn = c;
     let hostReadySent = false;
     const sendHostReady = ()=>{
-      if(hostReadySent) return; // only ever send once
+      if(hostReadySent) return;
       hostReadySent = true;
       send({type:'HOST_READY'});
     };
     conn.on('data', handleHostData);
-    // Guard: only disconnect if THIS connection is still the active one
     conn.on('close', ()=>{ if(conn === c) handleDisconnect(); });
     conn.on('error', ()=>{ if(conn === c) handleDisconnect(); });
     conn.on('open', sendHostReady);
-    // Fallback in case 'open' already fired before we registered
     if(conn.open) sendHostReady();
   });
 
   peer.on('error', (err)=>{
     if(err.type === 'unavailable-id'){
-      // Code collision — try a new one
-      peer.destroy(); peer = null;
       goToLobby();
     } else {
       setLobbyStatus('waiting', 'Connection error — try again.');
@@ -701,13 +708,11 @@ function goToLobby(){
 
 function handleHostData(data){
   if(data.type === 'JOIN'){
-    // Idempotent — safe to receive more than once
     G.oppUsername = data.name;
     G.oppFormation = data.formation;
     document.getElementById('slotName1').textContent = data.name;
     document.getElementById('slot1').classList.add('filled');
     G.connected = true;
-    // Confirm back to guest with current host state
     send({type:'HOST_INFO', name:G.username, hostFormation:lobbyFormation});
     checkLobbyReady();
   }
@@ -744,9 +749,7 @@ function checkLobbyReady(){
 function setLobbyStatus(state, text){
   const el = document.getElementById('lobbyStatus');
   el.classList.toggle('ready', state === 'ready');
-  el.innerHTML = state === 'waiting'
-    ? '<span class="pulse-dot"></span>' + text
-    : text;
+  el.innerHTML = state === 'waiting' ? '<span class="pulse-dot"></span>' + text : text;
 }
 
 function startDraft(){
@@ -772,7 +775,7 @@ function joinRoom(){
   destroyPeer();
   G.myFormation = joinFormation;
   G.mode = 'guest';
-  G.roomCode = code; // store for display in guest lobby
+  G.roomCode = code;
 
   peer = new Peer(undefined, {
     host: '0.peerjs.com', port: 443, path: '/', secure: true,
@@ -781,11 +784,9 @@ function joinRoom(){
       {urls:'stun:stun.l.google.com:19302'},
       {urls:'stun:stun1.l.google.com:19302'}
     ]}
-  }); // random ID for guest
+  });
   peer.on('open', ()=>{
     conn = peer.connect('apexxi-' + code, {reliable:true});
-
-    // Timeout if host not found
     const timeout = setTimeout(()=>{
       if(!conn || !conn.open){
         errEl.textContent = 'Room not found. Check the code and try again.';
@@ -796,13 +797,10 @@ function joinRoom(){
 
     conn.on('open', ()=>{
       clearTimeout(timeout);
-      // Send JOIN immediately as first attempt (may race on host side, but safe)
       conn.send({type:'JOIN', name:G.username, formation:joinFormation});
     });
     conn.on('data', (data)=>{
       if(data.type === 'HOST_READY'){
-        // Host explicitly signals its data listener is active — send/resend JOIN now.
-        // This is the guaranteed delivery path that eliminates the race condition.
         conn.send({type:'JOIN', name:G.username, formation:joinFormation});
       }
       if(data.type === 'HOST_INFO'){
@@ -830,11 +828,10 @@ function joinRoom(){
         initDraft();
       }
       if(data.type === 'RESULT'){
-        // Guest sees it from their perspective: their goals = guestGoals
         const goals = {a: data.guestGoals, b: data.hostGoals};
-        const my  = data.guestScore;
+        const my = data.guestScore;
         const opp = data.hostScore;
-        G.oppDraftDone = true; // ensure flag is set
+        G.oppDraftDone = true;
         setTimeout(()=>showResult(goals, my, opp), 800);
       }
     });
@@ -845,11 +842,6 @@ function joinRoom(){
       destroyPeer();
     });
   });
-  peer.on('error', (err)=>{
-    errEl.textContent = 'Room not found. Check the code.';
-    resetJoinBtn();
-    destroyPeer();
-  });
 }
 
 function resetJoinBtn(){
@@ -859,7 +851,6 @@ function resetJoinBtn(){
   checkJoinReady();
 }
 
-// Guest waiting lobby (reuse lobbyScreen but hide host-only elements)
 function showGuestLobby(){
   document.getElementById('lobbyCode').textContent = G.roomCode || '–';
   document.getElementById('slotName0').textContent = G.oppUsername;
@@ -873,11 +864,7 @@ function showGuestLobby(){
   showScreen('lobbyScreen');
 }
 
-// ═══════════════════════════════════════════════
-//  LEAVE / HOME
-// ═══════════════════════════════════════════════
 function leaveJoinScreen(){
-  // Clear all join screen state
   document.getElementById('joinCodeInput').value = '';
   document.getElementById('joinError').textContent = '';
   document.getElementById('joinFormationRow').querySelectorAll('.form-btn').forEach(b=>b.classList.remove('selected'));
@@ -890,13 +877,11 @@ function leaveJoinScreen(){
 function goHome(){
   send({type:'ROOM_CLOSED'});
   destroyPeer();
-  // Reset all state
   selectedMode = ''; lobbyFormation = ''; joinFormation = '';
   G = {username:G.username, mode:'', roomCode:'', myFormation:'', oppFormation:'', oppUsername:'',
     positions:[], pickedPlayers:[], usedNames:new Set(), lockedChoices:{},
     totalRating:0, selectedLeagues:[], activeSlot:null, activeFilter:null,
     draftDone:false, oppDraftDone:false, oppCount:0, oppPicks:null, connected:false};
-  // Reset lobby UI
   document.getElementById('lobbyStartBtn').style.display = '';
   document.getElementById('lobbyFormationRow').style.display = 'flex';
   document.querySelectorAll('#lobbyScreen > [style]').forEach(el=>{
@@ -906,7 +891,7 @@ function goHome(){
 }
 
 function handleDisconnect(){
-  if(!G.connected) return; // handshake not complete yet — ignore spurious close events
+  if(!G.connected) return;
   G.connected = false;
   const active = document.querySelector('.screen.active');
   if(active && (active.id === 'draftScreen' || active.id === 'lobbyScreen')){
@@ -928,7 +913,6 @@ function initDraft(){
   G.activeSlot = null; G.activeFilter = null;
   G.draftDone = false; G.oppDraftDone = false; G.oppCount = 0; G.oppPicks = null;
 
-  // Restore panel to default
   document.getElementById('selPanel').innerHTML = `
     <div class="sp-header">
       <div class="sp-title" id="spTitle">Select a Position</div>
@@ -973,7 +957,6 @@ function openSlot(idx){
   if(G.pickedPlayers[idx] !== null) return;
   G.activeSlot = idx;
   G.activeFilter = null;
-  // Highlight active, others available/filled
   for(let i=0;i<11;i++){
     const s = document.getElementById('pslot_'+i);
     if(!s) continue;
@@ -1010,7 +993,7 @@ function renderCards(players, filter=null){
   if(!filtered.length){ content.innerHTML='<div class="sp-idle"><p>No players match</p></div>'; return; }
   content.innerHTML = filtered.map(p=>`
     <div class="pick-card" onclick="pickPlayer('${p.name.replace(/'/g,"\\'")}')">
-      <img class="pick-card-img" src="${p.img}" alt="${p.name}" loading="lazy" onerror="this.style.opacity='0.3'">
+      <img class="pick-card-img" src="${getImgUrl(p.img)}" alt="${p.name}" loading="lazy" onerror="this.style.opacity='0.3'">
       <div class="pick-card-info"><div class="pcn">${p.name}</div><div class="pcm"><span class="pc-league">${p.league}</span></div></div>
       <div class="pick-card-rating">${p.rating}</div>
     </div>`).join('');
@@ -1036,9 +1019,8 @@ function pickPlayer(name){
   G.selectedLeagues.push(player.league);
   G.activeSlot = null; G.activeFilter = null;
 
-  // Update pitch slot visually
   document.getElementById('pslot_'+idx).className = 'pslot filled';
-  document.getElementById('pslotImg_'+idx).innerHTML = `<img src="${player.img}" alt="${player.name}" onerror="this.style.opacity='0.3'">`;
+  document.getElementById('pslotImg_'+idx).innerHTML = `<img src="${getImgUrl(player.img)}" alt="${player.name}" onerror="this.style.opacity='0.3'">`;
   document.getElementById('pslotLabel_'+idx).textContent = player.name.split(' ').slice(-1)[0];
 
   document.getElementById('leagueFilters').style.display = 'none';
@@ -1062,7 +1044,6 @@ function pickPlayer(name){
     document.getElementById('spTitle').textContent='Select a Position';
     document.getElementById('spPos').textContent='–';
     document.getElementById('spHint').textContent='Tap any glowing slot';
-    // Re-mark remaining slots available
     for(let i=0;i<11;i++){
       if(G.pickedPlayers[i]===null) document.getElementById('pslot_'+i).className='pslot available';
     }
@@ -1082,19 +1063,12 @@ function handleOppPickUpdate(data){
 function checkBothDone(){
   if(!G.draftDone || !G.oppDraftDone) return;
   if(G.mode === 'host'){
-    // HOST is the single source of truth for scoring
-    const my  = calcScore(G.pickedPlayers, G.selectedLeagues);
+    const my = calcScore(G.pickedPlayers, G.selectedLeagues);
     const opp = G.oppPicks ? calcScore(G.oppPicks) : {avg:85,chem:0,total:85};
     const goals = scoreToGoals(my.total, opp.total);
-    // Send result to guest so both see IDENTICAL scores
-    send({type:'RESULT',
-      hostScore:my, guestScore:opp,
-      hostGoals:goals.a, guestGoals:goals.b
-    });
-    // Host shows from host perspective (goals.a = host, goals.b = guest)
+    send({type:'RESULT', hostScore:my, guestScore:opp, hostGoals:goals.a, guestGoals:goals.b});
     setTimeout(()=>showResult(goals, my, opp), 800);
   }
-  // Guest waits — will receive RESULT message from host
 }
 
 // ═══════════════════════════════════════════════
@@ -1117,8 +1091,7 @@ function scoreToGoals(a,b){
   const abs=Math.abs(diff);let w,l;
   if(abs<=2){w=ri(1,2);l=w-1;}else if(abs<=5){w=ri(2,3);l=ri(0,1);}
   else if(abs<=10){w=ri(3,4);l=ri(0,1);}else{w=ri(4,5);l=0;}
-  w=Math.min(w,5);l=Math.min(l,w-1);
-  return diff>0?{a:w,b:l}:{a:l,b:w};
+  return diff>0?{a:Math.min(w,5),b:Math.min(l,w-1)}:{a:Math.min(l,w-1),b:Math.min(w,5)};
 }
 function ri(a,b){return Math.floor(Math.random()*(b-a+1))+a;}
 
@@ -1126,15 +1099,8 @@ function ri(a,b){return Math.floor(Math.random()*(b-a+1))+a;}
 //  RESULT
 // ═══════════════════════════════════════════════
 function showResult(goals, my, opp){
-  if(!goals || !my || !opp){
-    // Solo fallback (shouldn't happen in multiplayer)
-    my  = calcScore(G.pickedPlayers, G.selectedLeagues);
-    opp = {avg:85,chem:0,total:85};
-    goals = scoreToGoals(my.total, opp.total);
-  }
-
   const trophy = document.getElementById('resultTrophy');
-  const sub    = document.getElementById('resultSub');
+  const sub = document.getElementById('resultSub');
   if(goals.a > goals.b){
     trophy.textContent = G.username + ' Wins!';
     trophy.className = 'result-trophy win';
@@ -1150,36 +1116,28 @@ function showResult(goals, my, opp){
     sub.textContent = 'Evenly matched squads.';
   }
 
-  document.getElementById('r_myName').textContent  = G.username;
+  document.getElementById('r_myName').textContent = G.username;
   document.getElementById('r_oppName').textContent = G.oppUsername;
-  document.getElementById('r_myGoals').textContent  = goals.a;
+  document.getElementById('r_myGoals').textContent = goals.a;
   document.getElementById('r_oppGoals').textContent = goals.b;
-  document.getElementById('r_myGoals').className  = 'rsc-goals'+(goals.a>goals.b?' hi':'');
-  document.getElementById('r_oppGoals').className = 'rsc-goals'+(goals.b>goals.a?' hi':'');
-  document.getElementById('r_ovr').textContent    = my.avg;
-  document.getElementById('r_chem').textContent   = '+'+my.chem;
-  document.getElementById('r_score').textContent  = my.total;
+  document.getElementById('r_ovr').textContent = my.avg;
+  document.getElementById('r_chem').textContent = '+'+my.chem;
+  document.getElementById('r_score').textContent = my.total;
   document.getElementById('r_opp_score').textContent = opp.total;
 
-  const myHTML  = G.pickedPlayers.map((p,i)=>p?`<div class="rt-player"><img src="${p.img}" onerror="this.style.opacity='0.3'"><span class="rt-pname">${p.name}</span><span class="rt-ppos">${G.positions[i]}</span><span class="rt-prating">${p.rating}</span></div>`:'').join('');
-  const oppPos  = FORMATIONS[G.oppFormation||'4-3-3'].positions;
-  const oppHTML = G.oppPicks ? G.oppPicks.map((p,i)=>p?`<div class="rt-player"><img src="${p.img}" onerror="this.style.opacity='0.3'"><span class="rt-pname">${p.name}</span><span class="rt-ppos">${oppPos[i]||p.pos}</span><span class="rt-prating">${p.rating}</span></div>`:'').join('') : '<div style="color:var(--muted);font-size:0.78rem;padding:0.5rem">Squad data unavailable</div>';
+  const myHTML = G.pickedPlayers.map((p,i)=>p?`<div class="rt-player"><img src="${getImgUrl(p.img)}" onerror="this.style.opacity='0.3'"><span class="rt-pname">${p.name}</span><span class="rt-ppos">${G.positions[i]}</span><span class="rt-prating">${p.rating}</span></div>`:'').join('');
+  const oppPos = FORMATIONS[G.oppFormation||'4-3-3'].positions;
+  const oppHTML = G.oppPicks ? G.oppPicks.map((p,i)=>p?`<div class="rt-player"><img src="${getImgUrl(p.img)}" onerror="this.style.opacity='0.3'"><span class="rt-pname">${p.name}</span><span class="rt-ppos">${oppPos[i]||p.pos}</span><span class="rt-prating">${p.rating}</span></div>`:'').join('') : '<div style="color:var(--muted);padding:0.5rem">Squad data unavailable</div>';
   document.getElementById('resultTeams').innerHTML=`<div class="result-team"><div class="rt-header">${G.username} (${G.myFormation})</div>${myHTML}</div><div class="result-team"><div class="rt-header">${G.oppUsername} (${G.oppFormation||'–'})</div>${oppHTML}</div>`;
 
   showScreen('resultScreen');
 }
 
-// ═══════════════════════════════════════════════
-//  PLAY AGAIN / HOME
-// ═══════════════════════════════════════════════
 function playAgain(){
   if(G.mode === 'host'){
-    // Host triggers a new draft for both with same formations
     send({type:'PLAY_AGAIN', hostFormation: G.myFormation});
-    G.myFormation = G.myFormation; // keep formation
     initDraft();
   } else {
-    // Guest waits — host will send PLAY_AGAIN
     showScreen('lobbyScreen');
     document.getElementById('lobbyStartBtn').style.display = 'none';
     document.getElementById('lobbyFormationRow').style.display = 'none';
@@ -1187,11 +1145,7 @@ function playAgain(){
   }
 }
 
-// ═══════════════════════════════════════════════
-//  UTILS
-// ═══════════════════════════════════════════════
 function shuffle(arr){const a=[...arr];for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
-
 document.getElementById('usernameInput').addEventListener('keydown',e=>{if(e.key==='Enter')homeNext();});
 document.getElementById('joinCodeInput').addEventListener('keydown',e=>{if(e.key==='Enter')joinRoom();});
 </script>
